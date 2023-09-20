@@ -1,0 +1,123 @@
+name: tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.7", "3.8", "3.9", "3.10"]
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Set up Java 17
+      uses: actions/setup-java@v3
+      with:
+        distribution: adopt
+        java-version: 17
+
+    - name: Install Merlion
+      run: |
+        python -m pip install --upgrade pip setuptools wheel build
+        python -m pip install pytest coverage
+        python -m build
+        for f in dist/*.whl; do python -m pip install $f[all]; done
+        python -m pip install -e ts_datasets/
+
+    - name: Test with pytest
+      id: test
+      uses: nick-fields/retry@v2
+      env:
+        PYTHON_VERSION: ${{ matrix.python-version }}
+      with:
+        max_attempts: 1
+        timeout_minutes: 60
+        retry_on: error
+        command: |
+          set -euxo pipefail
+          # Get a comma-separated list of the directories of all python source files
+          files=$(for f in $(find merlion -iname "*.py"); do echo -n ",$f"; done)
+          script="import os; print(','.join({os.path.dirname(f) for f in '$files'.split(',') if f}))"
+          source_modules=$(python -c "$script")
+
+          # Run tests & obtain code coverage from coverage report.
+          coverage run --source=${source_modules} --omit=merlion/dashboard/* -L -m pytest -v -s
+          coverage report && coverage xml -o .github/badges/coverage.xml
+          COVERAGE=`coverage report | grep "TOTAL" | grep -Eo "[0-9\.]+%"`
+          echo "coverage=${COVERAGE}" >> $GITHUB_OUTPUT
+
+          # Choose a color based on code coverage
+          COVERAGE=${COVERAGE/\%/}
+          if (($COVERAGE > 90)); then
+            COLOR=brightgreen
+          elif (($COVERAGE > 80)); then
+            COLOR=green
+          elif (($COVERAGE > 70)); then
+            COLOR=yellow
+          elif (($COVERAGE > 60)); then
+            COLOR=orange
+          else
+            COLOR=red
+          fi
+          echo "color=${COLOR}" >> $GITHUB_OUTPUT
+
+    - name: Create coverage badge
+      if: ${{ github.ref == 'refs/heads/main' && matrix.python-version == '3.10' }}
+      uses: emibcn/badge-action@v1.2.1
+      with:
+        label: coverage
+        status: ${{ steps.test.outputs.coverage }}
+        color: ${{ steps.test.outputs.color }}
+        path: .github/badges/coverage.svg
+
+    - name: Push badge to badges branch
+      uses: s0/git-publish-subdir-action@v2.5.1
+      if: ${{ github.ref == 'refs/heads/main' && matrix.python-version == '3.10' }}
+      env:
+        REPO: self
+        BRANCH: badges
+        FOLDER: .github/badges
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  tests_windows:
+
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.7", "3.8", "3.9", "3.10"]
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Set up Java 17
+      uses: actions/setup-java@v3
+      with:
+        distribution: microsoft
+        java-version: 17
+
+    - name: Install Merlion
+      run: |
+        python -m pip install --upgrade pip setuptools wheel build pytest
+        python -m pip install ".[all]"
+        python -m pip install -e ts_datasets/
+
+    - name: Test with pytest
+      id: test
+      run: pytest -v -s --ignore=tests/spark

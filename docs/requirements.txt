@@ -1,0 +1,9 @@
+GitPython
+beautifulsoup4
+ipykernel
+nbsphinx
+pandoc
+docutils==0.16
+sphinx<6
+sphinx_autodoc_typehints
+sphinx_rtd_theme
